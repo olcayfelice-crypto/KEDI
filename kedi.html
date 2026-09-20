@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Kedi Oyunu</title>
+<style>
+  *{margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; user-select:none;}
+  html,body{ height:100%; overflow:hidden; background:#0a0a12; touch-action:none; font-family:sans-serif; }
+  #field{ position:fixed; inset:0; overflow:hidden; background:radial-gradient(circle at 50% 40%, #12122a, #05050a 80%); display:none; }
+  #field.show{display:block;}
+  #target{
+    position:absolute; width:56px; height:56px; font-size:38px;
+    display:flex; align-items:center; justify-content:center;
+    filter:drop-shadow(0 0 12px rgba(255,255,255,.25));
+    transition:transform .1s; left:0; top:0;
+  }
+  #target.blocked{ animation:shake .25s; }
+  @keyframes shake{ 0%,100%{transform:translateX(0);} 25%{transform:translateX(-6px);} 75%{transform:translateX(6px);} }
+  #target.win{ transform:scale(1.5) rotate(15deg); }
+  #ui{ position:fixed; top:10px; left:0; right:0; display:flex; justify-content:center; gap:10px; z-index:5; }
+  #ui button{ background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.2); color:#fff; padding:9px 16px; border-radius:20px; font-size:.9rem; }
+  #ui button.active{ background:#fff; color:#111; font-weight:700; }
+  #score{ position:fixed; top:10px; right:14px; color:#fff; font-size:.8rem; opacity:.6; z-index:5; }
+  #hint{ position:fixed; bottom:14px; left:0; right:0; text-align:center; color:#ffffff88; font-size:.78rem; z-index:5; }
+
+  #sudokuField{ position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:#0a0a12; }
+  #sudokuField.show{ display:flex; }
+  #sudokuGrid{ display:grid; grid-template-columns:repeat(4,1fr); gap:8px; width:min(88vw,420px); height:min(88vw,420px); }
+  .sc{ background:#1b1b2e; border-radius:14px; display:flex; align-items:center; justify-content:center; font-size:2.2rem; border:2px solid #2a2a44; }
+  .sc.good{ border-color:#4ade80; }
+  #sudokuWin{ position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); font-size:1.4rem; color:#4ade80; font-weight:800; display:none; text-shadow:0 0 20px rgba(0,0,0,.8); z-index:9; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <button id="btnMaze" class="active" onclick="showMode('maze')">🧩 Labirent</button>
+  <button id="btnSudoku" onclick="showMode('sudoku')">🐾 Kedi Sudoku</button>
+</div>
+<div id="score">Tamamlanan: 0</div>
+
+<div id="field">
+  <svg id="mazeLayer" style="position:absolute; inset:0; width:100%; height:100%;"></svg>
+  <div id="goalMark" style="position:absolute; font-size:30px;">🧀</div>
+  <div id="target"><span>🐭</span></div>
+</div>
+<div id="hint">Kedinin farenin herhangi bir yönüne dokunmasını izle — yol açıksa fare ilerler 🐾</div>
+
+<div id="sudokuField">
+  <div id="sudokuGrid"></div>
+</div>
+<div id="sudokuWin">🎉 Kedi çözdü!</div>
+
+<script>
+let currentMode = 'maze';
+let completedCount = 0;
+const field = document.getElementById('field');
+const sudokuField = document.getElementById('sudokuField');
+const targetEl = document.getElementById('target');
+const scoreEl = document.getElementById('score');
+let w=window.innerWidth, h=window.innerHeight;
+let pos = {x:0,y:0};
+
+/* ---------------- LABİRENT ---------------- */
+let mazeCols=0, mazeRows=0, mazeCells=[], cellSize=68, mazeOffX=0, mazeOffY=0;
+let curCell={x:0,y:0}, goalCell={x:0,y:0};
+let moving = false;
+
+function buildMaze(){
+  mazeCols = Math.max(4, Math.floor(w/cellSize));
+  mazeRows = Math.max(4, Math.floor((h-140)/cellSize));
+  mazeOffX = (w - mazeCols*cellSize)/2;
+  mazeOffY = 90 + (h-140-mazeRows*cellSize)/2;
+
+  const idx=(x,y)=>y*mazeCols+x;
+  mazeCells = new Array(mazeCols*mazeRows).fill(0).map(()=>({N:true,E:true,S:true,W:true,visited:false}));
+  const dirs=[{dx:0,dy:-1,d:'N',o:'S'},{dx:1,dy:0,d:'E',o:'W'},{dx:0,dy:1,d:'S',o:'N'},{dx:-1,dy:0,d:'W',o:'E'}];
+  let stack=[{x:0,y:0}]; mazeCells[0].visited=true;
+  while(stack.length){
+    const cur=stack[stack.length-1];
+    const opts=[];
+    dirs.forEach(dir=>{
+      const nx=cur.x+dir.dx, ny=cur.y+dir.dy;
+      if(nx>=0&&nx<mazeCols&&ny>=0&&ny<mazeRows && !mazeCells[idx(nx,ny)].visited){ opts.push({x:nx,y:ny,...dir}); }
+    });
+    if(opts.length){
+      const n = opts[Math.floor(Math.random()*opts.length)];
+      mazeCells[idx(cur.x,cur.y)][n.d]=false;
+      mazeCells[idx(n.x,n.y)][n.o]=false;
+      mazeCells[idx(n.x,n.y)].visited=true;
+      stack.push({x:n.x,y:n.y});
+    } else { stack.pop(); }
+  }
+
+  curCell = {x:0,y:0};
+  goalCell = {x:mazeCols-1, y:mazeRows-1};
+  pos.x = mazeOffX+curCell.x*cellSize+cellSize/2;
+  pos.y = mazeOffY+curCell.y*cellSize+cellSize/2;
+  targetEl.style.left = (pos.x-28)+'px';
+  targetEl.style.top = (pos.y-28)+'px';
+
+  const gm = document.getElementById('goalMark');
+  gm.style.left = (mazeOffX+goalCell.x*cellSize+cellSize/2-15)+'px';
+  gm.style.top = (mazeOffY+goalCell.y*cellSize+cellSize/2-15)+'px';
+
+  renderMazeWalls();
+}
+
+function renderMazeWalls(){
+  const svg = document.getElementById('mazeLayer');
+  let html='';
+  for(let y=0;y<mazeRows;y++){
+    for(let x=0;x<mazeCols;x++){
+      const c = mazeCells[y*mazeCols+x];
+      const x0=mazeOffX+x*cellSize, y0=mazeOffY+y*cellSize;
+      const x1=x0+cellSize, y1=y0+cellSize;
+      if(c.N) html+=`<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y0}" />`;
+      if(c.W) html+=`<line x1="${x0}" y1="${y0}" x2="${x0}" y2="${y1}" />`;
+      if(y===mazeRows-1 && c.S) html+=`<line x1="${x0}" y1="${y1}" x2="${x1}" y2="${y1}" />`;
+      if(x===mazeCols-1 && c.E) html+=`<line x1="${x1}" y1="${y0}" x2="${x1}" y2="${y1}" />`;
+    }
+  }
+  svg.innerHTML = `<g stroke="#ffffff55" stroke-width="3" stroke-linecap="round">${html}</g>`;
+}
+
+let audioCtx=null;
+function playSqueak(){
+  try{
+    if(!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+    const now = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator(); const g = audioCtx.createGain();
+    osc.type='sine'; osc.frequency.setValueAtTime(1200, now);
+    osc.frequency.exponentialRampToValueAtTime(500, now+0.09);
+    g.gain.setValueAtTime(0.18, now); g.gain.exponentialRampToValueAtTime(0.001, now+0.11);
+    osc.connect(g); g.connect(audioCtx.destination);
+    osc.start(now); osc.stop(now+0.12);
+  }catch(e){}
+}
+function playBlocked(){
+  try{
+    if(!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+    const now = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator(); const g = audioCtx.createGain();
+    osc.type='square'; osc.frequency.setValueAtTime(120, now);
+    g.gain.setValueAtTime(0.12, now); g.gain.exponentialRampToValueAtTime(0.001, now+0.08);
+    osc.connect(g); g.connect(audioCtx.destination);
+    osc.start(now); osc.stop(now+0.1);
+  }catch(e){}
+}
+
+// Kedi ekrana dokununca farenin hangi yöne itilmek istendiğini anla
+function handleMazeTouch(clientX, clientY){
+  if(moving) return;
+  const dx = clientX - pos.x, dy = clientY - pos.y;
+  if(Math.hypot(dx,dy) < 15) return; // tam üstüne dokunma, yön belirsiz
+  let dir;
+  if(Math.abs(dx) > Math.abs(dy)) dir = dx>0 ? 'E' : 'W';
+  else dir = dy>0 ? 'S' : 'N';
+
+  const c = mazeCells[curCell.y*mazeCols+curCell.x];
+  if(c[dir]){
+    // duvar var, geçemez
+    targetEl.classList.remove('blocked'); void targetEl.offsetWidth; targetEl.classList.add('blocked');
+    playBlocked();
+    return;
+  }
+  const deltas = {N:{x:0,y:-1}, S:{x:0,y:1}, E:{x:1,y:0}, W:{x:-1,y:0}};
+  const nx = curCell.x+deltas[dir].x, ny = curCell.y+deltas[dir].y;
+  moveMazeTo({x:nx,y:ny});
+}
+
+function moveMazeTo(cell){
+  moving = true;
+  curCell = cell;
+  const nx = mazeOffX+cell.x*cellSize+cellSize/2;
+  const ny = mazeOffY+cell.y*cellSize+cellSize/2;
+  const fromX=pos.x, fromY=pos.y;
+  const start=performance.now(); const dur=140;
+  playSqueak();
+  function step(t){
+    const p = Math.min(1,(t-start)/dur);
+    pos.x = fromX+(nx-fromX)*p; pos.y = fromY+(ny-fromY)*p;
+    targetEl.style.left=(pos.x-28)+'px'; targetEl.style.top=(pos.y-28)+'px';
+    if(p<1){ requestAnimationFrame(step); }
+    else{
+      moving=false;
+      if(curCell.x===goalCell.x && curCell.y===goalCell.y){
+        targetEl.classList.add('win');
+        completedCount++; scoreEl.textContent='Tamamlanan: '+completedCount;
+        setTimeout(()=>{ targetEl.classList.remove('win'); buildMaze(); }, 1100);
+      }
+    }
+  }
+  requestAnimationFrame(step);
+}
+
+field.addEventListener('touchstart', e=>{ for(const t of e.touches){ handleMazeTouch(t.clientX,t.clientY);} }, {passive:true});
+field.addEventListener('mousedown', e=> handleMazeTouch(e.clientX,e.clientY));
+window.addEventListener('resize', ()=>{ w=window.innerWidth; h=window.innerHeight; if(currentMode==='maze') buildMaze(); });
+
+/* ---------------- KEDİ SUDOKU ---------------- */
+const ICONS = ['🐾','🐟','🧶','🐭'];
+let sudokuGridData = [];
+function newSudoku(){
+  sudokuGridData = Array(16).fill(0).map(()=>Math.floor(Math.random()*4));
+  renderSudoku();
+}
+function renderSudoku(){
+  const grid = document.getElementById('sudokuGrid');
+  grid.innerHTML='';
+  for(let i=0;i<16;i++){
+    const cell = document.createElement('div');
+    cell.className='sc';
+    cell.textContent = ICONS[sudokuGridData[i]];
+    cell.onclick = ()=>{
+      sudokuGridData[i] = (sudokuGridData[i]+1)%4;
+      renderSudoku();
+      checkSudokuWin();
+    };
+    grid.appendChild(cell);
+  }
+}
+function checkSudokuWin(){
+  const cells = document.querySelectorAll('.sc');
+  let win = true;
+  for(let r=0;r<4;r++){
+    const row = new Set(); const col = new Set();
+    for(let c=0;c<4;c++){
+      row.add(sudokuGridData[r*4+c]);
+      col.add(sudokuGridData[c*4+r]);
+    }
+    if(row.size<4 || col.size<4){ win=false; }
+  }
+  if(win){
+    cells.forEach(c=>c.classList.add('good'));
+    completedCount++; scoreEl.textContent='Tamamlanan: '+completedCount;
+    const w2 = document.getElementById('sudokuWin');
+    w2.style.display='block';
+    setTimeout(()=>{ w2.style.display='none'; newSudoku(); }, 1400);
+  }
+}
+
+/* ---------------- MOD GEÇİŞİ ---------------- */
+function showMode(m){
+  currentMode = m;
+  document.getElementById('btnMaze').classList.toggle('active', m==='maze');
+  document.getElementById('btnSudoku').classList.toggle('active', m==='sudoku');
+  document.getElementById('hint').style.display = m==='maze' ? 'block' : 'none';
+  if(m==='maze'){
+    field.classList.add('show'); sudokuField.classList.remove('show');
+    buildMaze();
+  } else {
+    field.classList.remove('show'); sudokuField.classList.add('show');
+    newSudoku();
+  }
+}
+
+showMode('maze');
+</script>
+</body>
+</html>
